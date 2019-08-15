@@ -47,7 +47,7 @@ namespace KERBALISM
 		}
 
 		// consume EC for transmission, and transmit science data
-		public static void Update(Vessel v, Vessel_info vi, VesselData vd, Vessel_resources resources, double elapsed_s)
+		public static void Update(Vessel v, VesselData vd, VesselResources resources, double elapsed_s)
 		{
 			// do nothing if science system is disabled
 			if (!Features.Science) return;
@@ -57,19 +57,19 @@ namespace KERBALISM
 			if (HighLogic.CurrentGame.Mode != Game.Modes.SANDBOX && ResearchAndDevelopment.Instance == null) return;
 
 			// get connection info
-			ConnectionInfo conn = vi.connection;
+			ConnectionInfo conn = vd.Connection;
 			if (conn == null) return;
-			if (String.IsNullOrEmpty(vi.transmitting)) return;
+			if (String.IsNullOrEmpty(vd.transmitting)) return;
 
 			Drive warpCache = Cache.WarpCache(v);
 			bool isWarpCache = false;
 
 			double transmitSize = conn.rate * elapsed_s;
 			while(warpCache.files.Count > 0 || // transmit EVERYTHING in the cache, regardless of transmitSize.
-			      (transmitSize > double.Epsilon && !String.IsNullOrEmpty(vi.transmitting)))
+			      (transmitSize > double.Epsilon && !String.IsNullOrEmpty(vd.transmitting)))
 			{
 				// get filename of data being downloaded
-				var exp_filename = vi.transmitting;
+				var exp_filename = vd.transmitting;
 				if (string.IsNullOrEmpty(exp_filename))
 					break;
 
@@ -150,7 +150,7 @@ namespace KERBALISM
 				{
 					// remove the file
 					drive.files.Remove(exp_filename);
-					vi.transmitting = Science.Transmitting(v, true);
+					vd.transmitting = Science.Transmitting(v, true);
 				}
 			}
 		}
@@ -170,71 +170,35 @@ namespace KERBALISM
 			foreach(var p in Cache.WarpCache(v).files)
 				return p.Key;
 
+			double now = Planetarium.GetUniversalTime();
+			double maxXmitValue = -1;
+			string result = string.Empty;
+
 			// get first file flagged for transmission, AND has a ts at least 5 seconds old or is > 0.001Mb in size
 			foreach (var drive in Drive.GetDrives(v, true))
 			{
-				double now = Planetarium.GetUniversalTime();
 				foreach (var p in drive.files)
 				{
-					if (drive.GetFileSend(p.Key) && (p.Value.ts + 3 < now || p.Value.size > min_file_size)) return p.Key;
+					if (drive.GetFileSend(p.Key) && (p.Value.ts + 3 < now || p.Value.size > min_file_size))
+					{
+						// prioritize whichever file has the most science points per byte
+						var xmitValue = Value(p.Key, p.Value.size) / p.Value.size;
+						if(string.IsNullOrEmpty(result) || xmitValue > maxXmitValue)
+						{
+							result = p.Key;
+							maxXmitValue = xmitValue;
+						}
+					}
 				}
 			}
 
-			// no file flagged for transmission
-			return string.Empty;
-		}
-
-		public static void ClearDeferred()
-		{
-			deferredCredit.Clear();
-		}
-
-		public static void CreditAllDeferred()
-		{
-			foreach(var deferred in deferredCredit.Values)
-			{
-				Credit(deferred.subject_id, deferred.size, true, deferred.pv, true);
-			}
-			deferredCredit.Clear();
-		}
-
-		private static void CreditDeferred(string subject_id, double size, ProtoVessel pv)
-		{
-			if (deferredCredit.ContainsKey(subject_id))
-			{
-				var deferred = deferredCredit[subject_id];
-				deferred.size += size;
-				deferred.pv = pv;
-
-				var credits = Value(subject_id, deferred.size);
-				if(credits >= buffer_science_value)
-				{
-					deferredCredit.Remove(subject_id);
-					Credit(subject_id, deferred.size, true, pv, true);
-				}
-			}
-			else
-			{
-				deferredCredit.Add(subject_id, new DeferredCreditValues(subject_id, size, pv));
-			}
+			return result;
 		}
 
 		// credit science for the experiment subject specified
-		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv, bool enforced_credit = false)
+		public static float Credit(string subject_id, double size, bool transmitted, ProtoVessel pv)
 		{
 			var credits = Value(subject_id, size);
-
-			if(!enforced_credit && transmitted && credits < buffer_science_value) {
-				CreditDeferred(subject_id, size, pv);
-				return credits;
-			}
-
-			if(deferredCredit.ContainsKey(subject_id)) {
-				var deferred = deferredCredit[subject_id];
-				size += deferred.size;
-				deferred.size = 0;
-				credits = Value(subject_id, size);
-			}
 
 			// credit the science
 			var subject = ResearchAndDevelopment.GetSubjectByID(subject_id);
@@ -254,7 +218,9 @@ namespace KERBALISM
 				//   function only once in a while
 				GameEvents.OnScienceRecieved.Fire(credits, subject, pv, false);
 
-				API.OnScienceReceived.Fire(credits, subject, pv, transmitted);
+				API.OnScienceReceived.Notify(credits, subject, pv, transmitted);
+
+				pv.vesselRef.KerbalismData().ScienceLog.AddCredits(credits, subject);
 			}
 
 			// return amount of science credited
@@ -396,7 +362,7 @@ namespace KERBALISM
 		public static string TestRequirements(string experiment_id, string requirements, Vessel v)
 		{
 			CelestialBody body = v.mainBody;
-			Vessel_info vi = Cache.VesselInfo(v);
+			VesselData vd = v.KerbalismData();
 
 			List<string> list = Lib.Tokenize(requirements, ',');
 			foreach (string s in list)
@@ -417,23 +383,23 @@ namespace KERBALISM
 					case "OrbitMinArgOfPeriapsis": good = v.orbit.argumentOfPeriapsis >= double.Parse(value); break;
 					case "OrbitMaxArgOfPeriapsis": good = v.orbit.argumentOfPeriapsis <= double.Parse(value); break;
 
-					case "TemperatureMin": good = vi.temperature >= double.Parse(value); break;
-					case "TemperatureMax": good = vi.temperature <= double.Parse(value); break;
+					case "TemperatureMin": good = vd.EnvTemperature >= double.Parse(value); break;
+					case "TemperatureMax": good = vd.EnvTemperature <= double.Parse(value); break;
 					case "AltitudeMin": good = v.altitude >= double.Parse(value); break;
 					case "AltitudeMax": good = v.altitude <= double.Parse(value); break;
-					case "RadiationMin": good = vi.radiation >= double.Parse(value); break;
-					case "RadiationMax": good = vi.radiation <= double.Parse(value); break;
-					case "Microgravity": good = vi.zerog; break;
+					case "RadiationMin": good = vd.EnvRadiation >= double.Parse(value); break;
+					case "RadiationMax": good = vd.EnvRadiation <= double.Parse(value); break;
+					case "Microgravity": good = vd.EnvZeroG; break;
 					case "Body": good = TestBody(v.mainBody.name, value); break;
-					case "Shadow": good = vi.sunlight < double.Epsilon; break;
-					case "Sunlight": good = vi.sunlight > 0.5; break;
-					case "CrewMin": good = vi.crew_count >= int.Parse(value); break;
-					case "CrewMax": good = vi.crew_count <= int.Parse(value); break;
-					case "CrewCapacityMin": good = vi.crew_capacity >= int.Parse(value); break;
-					case "CrewCapacityMax": good = vi.crew_capacity <= int.Parse(value); break;
-					case "VolumePerCrewMin": good = vi.volume_per_crew >= double.Parse(value); break;
-					case "VolumePerCrewMax": good = vi.volume_per_crew <= double.Parse(value); break;
-					case "Greenhouse": good = vi.greenhouses.Count > 0; break;
+					case "Shadow": good = vd.EnvInFullShadow; break;
+					case "Sunlight": good = vd.EnvInSunlight; break;
+					case "CrewMin": good = vd.CrewCount >= int.Parse(value); break;
+					case "CrewMax": good = vd.CrewCount <= int.Parse(value); break;
+					case "CrewCapacityMin": good = vd.CrewCapacity >= int.Parse(value); break;
+					case "CrewCapacityMax": good = vd.CrewCapacity <= int.Parse(value); break;
+					case "VolumePerCrewMin": good = vd.VolumePerCrew >= double.Parse(value); break;
+					case "VolumePerCrewMax": good = vd.VolumePerCrew <= double.Parse(value); break;
+					case "Greenhouse": good = vd.Greenhouses.Count > 0; break;
 					case "Surface": good = Lib.Landed(v); break;
 					case "Atmosphere": good = body.atmosphere && v.altitude < body.atmosphereDepth; break;
 					case "AtmosphereBody": good = body.atmosphere; break;
@@ -443,21 +409,21 @@ namespace KERBALISM
 					case "BodyWithAtmosphere": good = body.atmosphere; break;
 					case "BodyWithoutAtmosphere": good = !body.atmosphere; break;
 						
-					case "SunAngleMin": good = Lib.SunBodyAngle(v) >= double.Parse(value); break;
-					case "SunAngleMax": good = Lib.SunBodyAngle(v) <= double.Parse(value); break;
+					case "SunAngleMin": good = vd.EnvSunBodyAngle >= double.Parse(value); break;
+					case "SunAngleMax": good = vd.EnvSunBodyAngle <= double.Parse(value); break;
 
 					case "Vacuum": good = !body.atmosphere || v.altitude > body.atmosphereDepth; break;
 					case "Ocean": good = body.ocean && v.altitude < 0.0; break;
 					case "PlanetarySpace": good = !Lib.IsSun(body) && !Lib.Landed(v) && v.altitude > body.atmosphereDepth; break;
-					case "AbsoluteZero": good = vi.temperature < 30.0; break;
-					case "InnerBelt": good = vi.inner_belt; break;
-					case "OuterBelt": good = vi.outer_belt; break;
-					case "MagneticBelt": good = vi.inner_belt || vi.outer_belt; break;
-					case "Magnetosphere": good = vi.magnetosphere; break;
-					case "Thermosphere": good = vi.thermosphere; break;
-					case "Exosphere": good = vi.exosphere; break;
-					case "InterPlanetary": good = Lib.IsSun(body) && !vi.interstellar; break;
-					case "InterStellar": good = Lib.IsSun(body) && vi.interstellar; break;
+					case "AbsoluteZero": good = vd.EnvTemperature < 30.0; break;
+					case "InnerBelt": good = vd.EnvInnerBelt; break;
+					case "OuterBelt": good = vd.EnvOuterBelt; break;
+					case "MagneticBelt": good = vd.EnvInnerBelt || vd.EnvOuterBelt; break;
+					case "Magnetosphere": good = vd.EnvMagnetosphere; break;
+					case "Thermosphere": good = vd.EnvThermosphere; break;
+					case "Exosphere": good = vd.EnvExosphere; break;
+					case "InterPlanetary": good = Lib.IsSun(body) && !vd.EnvInterstellar; break;
+					case "InterStellar": good = Lib.IsSun(body) && vd.EnvInterstellar; break;
 
 					case "SurfaceSpeedMin": good = v.srfSpeed >= double.Parse(value); break;
 					case "SurfaceSpeedMax": good = v.srfSpeed <= double.Parse(value); break;
@@ -696,6 +662,7 @@ namespace KERBALISM
 		// experiment info cache
 		static readonly Dictionary<string, ExperimentInfo> experiments = new Dictionary<string, ExperimentInfo>();
 		readonly static Dictionary<string, double> sampleMasses = new Dictionary<string, double>();
+		static readonly Dictionary<Guid, ScienceLog> scienceLog = new Dictionary<Guid, ScienceLog>();
 
 		private class DeferredCreditValues {
 			internal string subject_id;
@@ -709,8 +676,6 @@ namespace KERBALISM
 				this.pv = pv;
 			}
 		}
-
-		static readonly Dictionary<string, DeferredCreditValues> deferredCredit = new Dictionary<string, DeferredCreditValues>();
 	}
 
 } // KERBALISM

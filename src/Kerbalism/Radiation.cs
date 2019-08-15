@@ -178,7 +178,7 @@ namespace KERBALISM
 			geomagnetic_pole_lat = Lib.ConfigValue(node, "geomagnetic_pole_lat", 90.0f);
 			geomagnetic_pole_lon = Lib.ConfigValue(node, "geomagnetic_pole_lon", 0.0f);
 			geomagnetic_offset = Lib.ConfigValue(node, "geomagnetic_offset", 0.0f);
-			reference = Lib.ConfigValue(node, "reference", Lib.GetSun(body).flightGlobalsIndex);
+			reference = Lib.ConfigValue(node, "reference", Lib.GetParentSun(body).flightGlobalsIndex);
 
 			// get the radiation environment
 			if (!models.TryGetValue(Lib.ConfigValue(node, "radiation_model", ""), out model)) model = RadiationModel.none;
@@ -626,8 +626,7 @@ namespace KERBALISM
 			// add extern radiation
 			radiation += PreferencesStorm.Instance.ExternRadiation;
 
-			// add emitter radiation
-			radiation += Emitter.Total(v);
+
 
 			// if there is a storm in progress
 			if (Storm.InProgress(v))
@@ -637,13 +636,19 @@ namespace KERBALISM
 				if (magnetosphere) blackout = true;
 				else radiation += PreferencesStorm.Instance.StormRadiation * sunlight;
 			}
+			
+			// apply gamma transparency if inside atmosphere
+			radiation *= gamma_transparency;
 
+			// add emitter radiation after atmosphere transparency
+			radiation += Emitter.Total(v);
+			
 			// clamp radiation to positive range
 			// note: we avoid radiation going to zero by using a small positive value
 			radiation = Math.Max(radiation, Nominal);
 
-			// return radiation, scaled by gamma transparency if inside atmosphere
-			return radiation * gamma_transparency;
+			// return radiation
+			return radiation;
 		}
 
 
@@ -709,16 +714,16 @@ namespace KERBALISM
 		}
 
 		// show warning message when a vessel cross a radiation belt
-		public static void BeltWarnings(Vessel v, Vessel_info vi, VesselData vd)
+		public static void BeltWarnings(Vessel v, VesselData vd)
 		{
 			// if radiation is enabled
 			if (Features.Radiation)
 			{
 				// we only show the warning for manned vessels, or for all vessels the first time its crossed
-				bool must_warn = vi.crew_count > 0 || !DB.landmarks.belt_crossing;
+				bool must_warn = vd.CrewCount > 0 || !DB.landmarks.belt_crossing;
 
 				// are we inside a belt
-				bool inside_belt = vi.inner_belt || vi.outer_belt;
+				bool inside_belt = vd.EnvInnerBelt || vd.EnvOuterBelt;
 
 				// show the message
 				if (inside_belt && !vd.msg_belt && must_warn)
@@ -736,7 +741,7 @@ namespace KERBALISM
 				if (inside_belt) DB.landmarks.belt_crossing = true;
 
 				// record first heliopause crossing
-				if (vi.interstellar) DB.landmarks.heliopause_crossing = true;
+				if (vd.EnvInterstellar) DB.landmarks.heliopause_crossing = true;
 			}
 		}
 
@@ -763,6 +768,21 @@ namespace KERBALISM
 			  : null;
 		}
 
+		/// <summary>
+		/// Calculate radiation shielding efficiency. Parameter shielding should be in range [0..1]
+		/// <para>
+		/// If you have a thickness which stops a known amount of radiation of a known and constant
+		/// type, then if you have a new thickness, you can calculate how much it stops by:
+		/// </para>
+		/// Stoppage = 1 - ((1 - AmountStoppedByKnownThickness)^(NewThickness / KnownThickness))
+		/// <para>
+		/// source : http://www.projectrho.com/public_html/rocket/radiation.php#id--Radiation_Shielding--Shielding--Shield_Rating
+		/// </para>
+		/// </summary>
+		public static double ShieldingEfficiency(double shielding)
+		{
+			return 1 - Math.Pow(1 - PreferencesStorm.Instance.shieldingEfficiency, Lib.Clamp(shielding, 0.0, 1.0));
+		}
 
 		static Dictionary<string, RadiationModel> models = new Dictionary<string, RadiationModel>(16);
 		static Dictionary<string, RadiationBody> bodies = new Dictionary<string, RadiationBody>(32);

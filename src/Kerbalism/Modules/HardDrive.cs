@@ -7,7 +7,7 @@ using UnityEngine;
 namespace KERBALISM
 {
 
-	public sealed class HardDrive : PartModule, IScienceDataContainer, ISpecifics, IModuleInfo, IPartMassModifier
+	public class HardDrive : PartModule, IScienceDataContainer, ISpecifics, IModuleInfo, IPartMassModifier
 	{
 		[KSPField] public double dataCapacity = -1;             // drive capacity, in Mb. -1 = unlimited
 		[KSPField] public int sampleCapacity = -1;              // drive capacity, in slots. -1 = unlimited
@@ -210,6 +210,12 @@ namespace KERBALISM
 
 		// science container implementation
 		public ScienceData[] GetData()
+		{
+			return GetData(drive);
+		}
+
+		// science container implementation
+		public static ScienceData[] GetData(Drive drive)
 		{
 			// generate and return stock science data
 			List<ScienceData> data = new List<ScienceData>();

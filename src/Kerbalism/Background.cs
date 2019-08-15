@@ -64,7 +64,6 @@ namespace KERBALISM
 				case "ModuleRadioisotopeGenerator": return Module_type.RadioisotopeGenerator;
 				case "ModuleCryoTank": return Module_type.CryoTank;
 				case "FNGenerator": return Module_type.FNGenerator;
-				case "ModuleNonRechargeBattery": return Module_type.NonRechargeBattery;
 				case "KerbalismProcess": return Module_type.KerbalismProcess;
 				case "SolarPanelFixer": return Module_type.SolarPanelFixer;
 			}
@@ -80,20 +79,13 @@ namespace KERBALISM
 			internal Module_type type;
 		}
 
-		public static void Update(Vessel v, Vessel_info vi, VesselData vd, Vessel_resources resources, double elapsed_s)
+		public static void Update(Vessel v, VesselData vd, VesselResources resources, double elapsed_s)
 		{
 			if (!Lib.IsVessel(v))
 				return;
 
 			// get most used resource handlers
-			Resource_info ec = resources.Info(v, "ElectricCharge");
-
-			// This is basically handled in cache. However, when accelerating time warp while
-			// the vessel is in shadow, the cache logic doesn't kick in soon enough. So we double-check here
-			if (TimeWarp.CurrentRate > 1000.0f || elapsed_s > 150)  // we're time warping fast...
-			{
-				vi.highspeedWarp(v);
-			}
+			ResourceInfo ec = resources.GetResource(v, "ElectricCharge");
 
 			foreach(var e in Background_PMs(v))
 			{
@@ -101,7 +93,7 @@ namespace KERBALISM
 				{
 					case Module_type.Reliability: Reliability.BackgroundUpdate(v, e.p, e.m, e.module_prefab as Reliability); break;
 					case Module_type.Experiment: Experiment.BackgroundUpdate(v, e.m, e.module_prefab as Experiment, ec, resources, elapsed_s); break;
-					case Module_type.Greenhouse: Greenhouse.BackgroundUpdate(v, e.m, e.module_prefab as Greenhouse, vi, resources, elapsed_s); break;
+					case Module_type.Greenhouse: Greenhouse.BackgroundUpdate(v, e.m, e.module_prefab as Greenhouse, vd, resources, elapsed_s); break;
 					case Module_type.GravityRing: GravityRing.BackgroundUpdate(v, e.p, e.m, e.module_prefab as GravityRing, ec, elapsed_s); break;
 					case Module_type.Emitter: Emitter.BackgroundUpdate(v, e.p, e.m, e.module_prefab as Emitter, ec, elapsed_s); break;
 					case Module_type.Harvester: Harvester.BackgroundUpdate(v, e.m, e.module_prefab as Harvester, elapsed_s); break; // Kerbalism ground and air harvester module
@@ -118,9 +110,7 @@ namespace KERBALISM
 					case Module_type.RadioisotopeGenerator: ProcessRadioisotopeGenerator(v, e.p, e.m, e.module_prefab, ec, elapsed_s); break;
 					case Module_type.CryoTank: ProcessCryoTank(v, e.p, e.m, e.module_prefab, resources, ec, elapsed_s); break;
 					case Module_type.FNGenerator: ProcessFNGenerator(v, e.p, e.m, e.module_prefab, ec, elapsed_s); break;
-					case Module_type.NonRechargeBattery: ProcessNonRechargeBattery(v, e.p, e.m, e.module_prefab, ec, elapsed_s); break;
-					case Module_type.KerbalismProcess: KerbalismProcess.BackgroundUpdate(v, e.m, e.module_prefab as KerbalismProcess, ec, resources, elapsed_s); break;
-					case Module_type.SolarPanelFixer: SolarPanelFixer.BackgroundUpdate(v, e.m, e.module_prefab as SolarPanelFixer, vi, ec, elapsed_s); break;
+					case Module_type.SolarPanelFixer: SolarPanelFixer.BackgroundUpdate(v, e.m, e.module_prefab as SolarPanelFixer, vd, ec, elapsed_s); break;
 				}
 			}
 		}
@@ -179,7 +169,7 @@ namespace KERBALISM
 			return result;
 		}
 
-		static void ProcessFNGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule fission_generator, Resource_info ec, double elapsed_s)
+		static void ProcessFNGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule fission_generator, ResourceInfo ec, double elapsed_s)
 		{
 			string maxPowerStr = Lib.Proto.GetString(m, "MaxPowerStr");
 			double maxPower = 0;
@@ -190,10 +180,10 @@ namespace KERBALISM
 			else
 				maxPower = double.Parse(maxPowerStr.Replace(" KW", ""));
 
-			ec.Produce(maxPower * elapsed_s, "fngenerator");
+			ec.Produce(maxPower * elapsed_s, "KSPIE generator");
 		}
 
-		static void ProcessCommand(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleCommand command, Vessel_resources resources, double elapsed_s)
+		static void ProcessCommand(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleCommand command, VesselResources resources, double elapsed_s)
 		{
 			// do not consume if this is a MCM with no crew
 			// rationale: for consistency, the game doesn't consume resources for MCM without crew in loaded vessels
@@ -209,27 +199,27 @@ namespace KERBALISM
 			}
 		}
 
-		static void ProcessGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleGenerator generator, Vessel_resources resources, double elapsed_s)
+		static void ProcessGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleGenerator generator, VesselResources resources, double elapsed_s)
 		{
 			// if active
 			if (Lib.Proto.GetBool(m, "generatorIsActive"))
 			{
 				// create and commit recipe
-				Resource_recipe recipe = new Resource_recipe(p, "generator");
+				ResourceRecipe recipe = new ResourceRecipe(p, "generator");
 				foreach (ModuleResource ir in generator.resHandler.inputResources)
 				{
-					recipe.Input(ir.name, ir.rate * elapsed_s);
+					recipe.AddInput(ir.name, ir.rate * elapsed_s);
 				}
 				foreach (ModuleResource or in generator.resHandler.outputResources)
 				{
-					recipe.Output(or.name, or.rate * elapsed_s, true);
+					recipe.AddOutput(or.name, or.rate * elapsed_s, true);
 				}
-				resources.Transform(recipe);
+				resources.AddRecipe(recipe);
 			}
 		}
 
 
-		static void ProcessConverter(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleResourceConverter converter, Vessel_resources resources, double elapsed_s)
+		static void ProcessConverter(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleResourceConverter converter, VesselResources resources, double elapsed_s)
 		{
 			// note: ignore stock temperature mechanic of converters
 			// note: ignore auto shutdown
@@ -244,8 +234,8 @@ namespace KERBALISM
 				bool full = true;
 				foreach (var or in converter.outputList)
 				{
-					Resource_info res = resources.Info(v, or.ResourceName);
-					full &= (res.level >= converter.FillAmount - double.Epsilon);
+					ResourceInfo res = resources.GetResource(v, or.ResourceName);
+					full &= (res.Level >= converter.FillAmount - double.Epsilon);
 				}
 
 				// if not full
@@ -268,16 +258,16 @@ namespace KERBALISM
 					  : converter.EfficiencyBonus * (converter.SpecialistBonusBase + (converter.SpecialistEfficiencyFactor * (exp_level + 1)));
 
 					// create and commit recipe
-					Resource_recipe recipe = new Resource_recipe(p, "converter");
+					ResourceRecipe recipe = new ResourceRecipe(p, "converter");
 					foreach (var ir in converter.inputList)
 					{
-						recipe.Input(ir.ResourceName, ir.Ratio * exp_bonus * elapsed_s);
+						recipe.AddInput(ir.ResourceName, ir.Ratio * exp_bonus * elapsed_s);
 					}
 					foreach (var or in converter.outputList)
 					{
-						recipe.Output(or.ResourceName, or.Ratio * exp_bonus * elapsed_s, or.DumpExcess);
+						recipe.AddOutput(or.ResourceName, or.Ratio * exp_bonus * elapsed_s, or.DumpExcess);
 					}
-					resources.Transform(recipe);
+					resources.AddRecipe(recipe);
 				}
 
 				// undo stock behavior by forcing last_update_time to now
@@ -286,7 +276,7 @@ namespace KERBALISM
 		}
 
 
-		static void ProcessDrill(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleResourceHarvester harvester, Vessel_resources resources, double elapsed_s)
+		static void ProcessDrill(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleResourceHarvester harvester, VesselResources resources, double elapsed_s)
 		{
 			// note: ignore stock temperature mechanic of harvesters
 			// note: ignore auto shutdown
@@ -298,7 +288,7 @@ namespace KERBALISM
 			{
 				// do nothing if full
 				// note: comparing against previous amount
-				if (resources.Info(v, harvester.ResourceName).level < harvester.FillAmount - double.Epsilon)
+				if (resources.GetResource(v, harvester.ResourceName).Level < harvester.FillAmount - double.Epsilon)
 				{
 					// deduce crew bonus
 					int exp_level = -1;
@@ -333,13 +323,13 @@ namespace KERBALISM
 					if (abundance > harvester.HarvestThreshold)
 					{
 						// create and commit recipe
-						Resource_recipe recipe = new Resource_recipe(p, "drill");
+						ResourceRecipe recipe = new ResourceRecipe(p, "drill");
 						foreach (var ir in harvester.inputList)
 						{
-							recipe.Input(ir.ResourceName, ir.Ratio * elapsed_s);
+							recipe.AddInput(ir.ResourceName, ir.Ratio * elapsed_s);
 						}
-						recipe.Output(harvester.ResourceName, abundance * harvester.Efficiency * exp_bonus * elapsed_s, true);
-						resources.Transform(recipe);
+						recipe.AddOutput(harvester.ResourceName, abundance * harvester.Efficiency * exp_bonus * elapsed_s, true);
+						resources.AddRecipe(recipe);
 					}
 				}
 
@@ -349,7 +339,7 @@ namespace KERBALISM
 		}
 
 
-		static void ProcessAsteroidDrill(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleAsteroidDrill asteroid_drill, Vessel_resources resources, double elapsed_s)
+		static void ProcessAsteroidDrill(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleAsteroidDrill asteroid_drill, VesselResources resources, double elapsed_s)
 		{
 			// note: untested
 			// note: ignore stock temperature mechanic of asteroid drills
@@ -401,14 +391,14 @@ namespace KERBALISM
 						double res_amount = abundance * asteroid_drill.Efficiency * exp_bonus * elapsed_s;
 
 						// transform EC into mined resource
-						Resource_recipe recipe = new Resource_recipe(p, "asteroidDrill");
-						recipe.Input("ElectricCharge", asteroid_drill.PowerConsumption * elapsed_s);
-						recipe.Output(res_name, res_amount, true);
-						resources.Transform(recipe);
+						ResourceRecipe recipe = new ResourceRecipe(p, "asteroidDrill");
+						recipe.AddInput("ElectricCharge", asteroid_drill.PowerConsumption * elapsed_s);
+						recipe.AddOutput(res_name, res_amount, true);
+						resources.AddRecipe(recipe);
 
 						// if there was ec
 						// note: comparing against amount in previous simulation step
-						if (resources.Info(v, "ElectricCharge").amount > double.Epsilon)
+						if (resources.GetResource(v, "ElectricCharge").Amount > double.Epsilon)
 						{
 							// consume asteroid mass
 							Lib.Proto.Set(asteroid_info, "currentMassVal", (mass - res_density * res_amount));
@@ -422,7 +412,7 @@ namespace KERBALISM
 		}
 
 
-		static void ProcessStockLab(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleScienceConverter lab, Resource_info ec, double elapsed_s)
+		static void ProcessStockLab(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleScienceConverter lab, ResourceInfo ec, double elapsed_s)
 		{
 			// note: we are only simulating the EC consumption
 			// note: there is no easy way to 'stop' the lab when there isn't enough EC
@@ -431,12 +421,12 @@ namespace KERBALISM
 			if (Lib.Proto.GetBool(m, "IsActivated"))
 			{
 				// consume ec
-				ec.Consume(lab.powerRequirement * elapsed_s, "lab");
+				ec.Consume(lab.powerRequirement * elapsed_s, "science converter");
 			}
 		}
 
 
-		static void ProcessLight(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleLight light, Resource_info ec, double elapsed_s)
+		static void ProcessLight(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, ModuleLight light, ResourceInfo ec, double elapsed_s)
 		{
 			if (light.useResources && Lib.Proto.GetBool(m, "isOn"))
 			{
@@ -445,7 +435,7 @@ namespace KERBALISM
 		}
 
 		/*
-		static void ProcessScanner(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule scanner, Part part_prefab, VesselData vd, Resource_info ec, double elapsed_s)
+		static void ProcessScanner(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule scanner, Part part_prefab, VesselData vd, ResourceInfo ec, double elapsed_s)
 		{
 			// get ec consumption rate
 			double power = SCANsat.EcConsumption(scanner);
@@ -499,18 +489,18 @@ namespace KERBALISM
 		}
 		*/
 
-		static void ProcessFissionGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule fission_generator, Resource_info ec, double elapsed_s)
+		static void ProcessFissionGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule fission_generator, ResourceInfo ec, double elapsed_s)
 		{
 			// note: ignore heat
 
 			double power = Lib.ReflectionValue<float>(fission_generator, "PowerGeneration");
 			var reactor = p.modules.Find(k => k.moduleName == "FissionReactor");
 			double tweakable = reactor == null ? 1.0 : Lib.ConfigValue(reactor.moduleValues, "CurrentPowerPercent", 100.0) * 0.01;
-			ec.Produce(power * tweakable * elapsed_s, "fissionreactor");
+			ec.Produce(power * tweakable * elapsed_s, "fission reactor");
 		}
 
 
-		static void ProcessRadioisotopeGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule radioisotope_generator, Resource_info ec, double elapsed_s)
+		static void ProcessRadioisotopeGenerator(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule radioisotope_generator, ResourceInfo ec, double elapsed_s)
 		{
 			// note: doesn't support easy mode
 
@@ -518,11 +508,11 @@ namespace KERBALISM
 			double half_life = Lib.ReflectionValue<float>(radioisotope_generator, "HalfLife");
 			double mission_time = v.missionTime / (3600.0 * Lib.HoursInDay() * Lib.DaysInYear());
 			double remaining = Math.Pow(2.0, (-mission_time) / half_life);
-			ec.Produce(power * remaining * elapsed_s, "rtg");
+			ec.Produce(power * remaining * elapsed_s, "RTG");
 		}
 
 
-		static void ProcessCryoTank(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule cryotank, Vessel_resources resources, Resource_info ec, double elapsed_s)
+		static void ProcessCryoTank(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule cryotank, VesselResources resources, ResourceInfo ec, double elapsed_s)
 		{
 			// Note. Currently background simulation of Cryotanks has an irregularity in that boiloff of a fuel type in a tank removes resources from all tanks
 			// but at least some simulation is better than none ;)
@@ -532,7 +522,7 @@ namespace KERBALISM
 			if (fuels == null) return;
 
 			// is cooling available, note: comparing against amount in previous simulation step
-			bool available = (Lib.Proto.GetBool(m, "CoolingEnabled") && ec.amount > double.Epsilon);
+			bool available = (Lib.Proto.GetBool(m, "CoolingEnabled") && ec.Amount > double.Epsilon);
 
 			// get cooling cost
 			double cooling_cost = Lib.ReflectionValue<float>(cryotank, "CoolingCost");
@@ -550,11 +540,11 @@ namespace KERBALISM
 					continue;
 
 				//get fuel resource
-				Resource_info fuel = resources.Info(v, fuel_name);
+				ResourceInfo fuel = resources.GetResource(v, fuel_name);
 
 				// if there is some fuel
 				// note: comparing against amount in previous simulation step
-				if (fuel.amount > double.Epsilon)
+				if (fuel.Amount > double.Epsilon)
 				{
 					// Try to find resource "fuel_name" in PartResources
 					ProtoPartResourceSnapshot proto_fuel = p.resources.Find(k => k.resourceName == fuel_name);
@@ -584,17 +574,8 @@ namespace KERBALISM
 			}
 
 			// apply EC consumption
-			ec.Consume(total_cost * elapsed_s, "cryotank");
-		}
-
-		static void ProcessNonRechargeBattery(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, PartModule fission_generator, Resource_info ec, double elapsed_s)
-		{
-			ProtoPartResourceSnapshot proto_ec = p.resources.Find(k => k.resourceName == "ElectricCharge");
-			proto_ec.maxAmount = proto_ec.amount;
-			ec.Sync(v, elapsed_s);
+			ec.Consume(total_cost * elapsed_s, "cryo tank");
 		}
 	}
-
-
 } // KERBALISM
 

@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace KERBALISM
 {
-	public sealed class Habitat: PartModule, ISpecifics
+	public class Habitat: PartModule, ISpecifics
 	{
 		// config
 		[KSPField] public double volume = 0.0;                      // habitable volume in m^3, deduced from bounding box if not specified
@@ -360,8 +360,9 @@ namespace KERBALISM
 
 			if(max_pressure < Settings.PressureThreshold && Lib.IsFlight())
 			{
-				var vi = Cache.VesselInfo(vessel);
-				vi.max_pressure = Math.Min(vi.max_pressure, max_pressure);
+				VesselData vd = vessel.KerbalismData();
+				// TODO : maxPressure is both set from here and evaluated in the VesselData update, a sure sign that this is is a buggy mess
+				vd.maxPressure = Math.Min(vd.maxPressure, max_pressure);
 			}
 
 			// state machine
@@ -459,42 +460,43 @@ namespace KERBALISM
 		public static double Tot_volume(Vessel v)
 		{
 			// we use capacity: this mean that partially pressurized parts will still count,
-			return ResourceCache.Info(v, "Atmosphere").capacity / 1e3;
+			return ResourceCache.GetResource(v, "Atmosphere").Capacity / 1e3;
 		}
 
 		// return habitat surface in a vessel in m^2
 		public static double Tot_surface(Vessel v)
 		{
 			// we use capacity: this mean that partially pressurized parts will still count,
-			return ResourceCache.Info(v, "Shielding").capacity;
+			return ResourceCache.GetResource(v, "Shielding").Capacity;
 		}
 
 		// return normalized pressure in a vessel
 		public static double Pressure(Vessel v)
 		{
 			// the pressure is simply the atmosphere level
-			return ResourceCache.Info(v, "Atmosphere").level;
+			return ResourceCache.GetResource(v, "Atmosphere").Level;
 		}
 
 		// return waste level in a vessel atmosphere
 		public static double Poisoning(Vessel v)
 		{
 			// the proportion of co2 in the atmosphere is simply the level of WasteAtmo
-			return ResourceCache.Info(v, "WasteAtmosphere").level;
+			return ResourceCache.GetResource(v, "WasteAtmosphere").Level;
 		}
 
 		// return moisture level in a vessel atmosphere
 		public static double Humidity(Vessel v)
 		{
 			// the proportion of moisture in the atmosphere is simply the level of MoistAtmo + (0.6, base humidity of 60%)
-			return ResourceCache.Info(v, "MoistAtmosphere").level + 0.6;
+			return ResourceCache.GetResource(v, "MoistAtmosphere").Level + 0.6;
 		}
 
-		// return shielding factor in a vessel
+		/// <summary>
+		/// Return vessel shielding factor.
+		/// </summary>
 		public static double Shielding(Vessel v)
 		{
-			// the shielding factor is simply the level of shielding, scaled by the 'shielding efficiency' setting
-			return ResourceCache.Info(v, "Shielding").level * PreferencesStorm.Instance.shieldingEfficiency;
+			return Radiation.ShieldingEfficiency(ResourceCache.GetResource(v, "Shielding").Level);
 		}
 
 		// return living space factor in a vessel

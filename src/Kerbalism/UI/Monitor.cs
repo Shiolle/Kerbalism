@@ -62,7 +62,7 @@ namespace KERBALISM
 
 			// if nothing is selected, or if the selected vessel doesn't exist
 			// anymore, or if it has become invalid for whatever reason
-			if (selected_v == null || !Cache.VesselInfo(selected_v).is_valid)
+			if (selected_v == null || !selected_v.KerbalismIsValid())
 			{
 				// forget the selected vessel, if any
 				selected_id = Guid.Empty;
@@ -174,13 +174,10 @@ namespace KERBALISM
 		bool Render_vessel(Panel p, Vessel v, bool selected = false)
 		{
 			// get vessel info
-			Vessel_info vi = Cache.VesselInfo(v);
+			VesselData vd = v.KerbalismData();
 
 			// skip invalid vessels
-			if (!vi.is_valid) return false;
-
-			// get data from db
-			VesselData vd = DB.Vessel(v);
+			if (!vd.IsValid) return false;
 
 			// get vessel crew
 			List<ProtoCrewMember> crew = Lib.CrewList(v);
@@ -236,19 +233,19 @@ namespace KERBALISM
 			}
 
 			// problem indicator
-			Indicator_problems(p, v, vi, crew);
+			Indicator_problems(p, v, vd, crew);
 
 			// battery indicator
-			Indicator_ec(p, v, vi);
+			Indicator_ec(p, v, vd);
 
 			// supply indicator
-			if (Features.Supplies) Indicator_supplies(p, v, vi);
+			if (Features.Supplies) Indicator_supplies(p, v, vd);
 
 			// reliability indicator
-			if (Features.Reliability) Indicator_reliability(p, v, vi);
+			if (Features.Reliability) Indicator_reliability(p, v, vd);
 
 			// signal indicator
-			if (API.Comm.handlers.Count > 0 || HighLogic.fetch.currentGame.Parameters.Difficulty.EnableCommNet) Indicator_signal(p, v, vi);
+			if (API.Comm.handlers.Count > 0 || HighLogic.fetch.currentGame.Parameters.Difficulty.EnableCommNet) Indicator_signal(p, v, vd);
 
 			// done
 			return true;
@@ -257,7 +254,7 @@ namespace KERBALISM
 		void Render_menu(Vessel v)
 		{
 			const string tooltip = "\n<i>(middle-click to popout in a window, middle-click again to close popout)</i>";
-			VesselData vd = DB.Vessel(v);
+			VesselData vd = v.KerbalismData();
 			GUILayout.BeginHorizontal(Styles.entry_container);
 			GUILayout.Label(new GUIContent(page == MonitorPage.telemetry ? " <color=#00ffff>INFO</color> " : " INFO ", Icons.small_info, "Telemetry readings" + tooltip), config_style);
 			if (Lib.IsClicked()) page = MonitorPage.telemetry;
@@ -334,6 +331,10 @@ namespace KERBALISM
 			Render_TypeFilterButon(VesselType.Relay);
 			Render_TypeFilterButon(VesselType.EVA);
 
+#if !KSP170 && !KSP16 && !KSP15 && !KSP14
+			if (Kerbalism.SerenityEnabled) Render_TypeFilterButon(VesselType.DeployedScienceController);
+#endif
+
 			filter = Lib.TextFieldPlaceholder("Kerbalism_filter", filter, filter_placeholder, filter_style).ToUpper();
 			GUILayout.EndHorizontal();
 			GUILayout.Space(Styles.ScaleFloat(10.0f));
@@ -370,9 +371,9 @@ namespace KERBALISM
 			}
 		}
 
-		void Problem_sunlight(Vessel_info info, ref List<Texture2D> icons, ref List<string> tooltips)
+		void Problem_sunlight(VesselData vd, ref List<Texture2D> icons, ref List<string> tooltips)
 		{
-			if (info.sunlight <= double.Epsilon)
+			if (vd.EnvInFullShadow)
 			{
 				icons.Add(Icons.sun_black);
 				tooltips.Add("In shadow");
@@ -429,50 +430,50 @@ namespace KERBALISM
 			else if (stress_severity == 2) icons.Add(Icons.brain_red);
 		}
 
-		void Problem_radiation(Vessel_info info, ref List<Texture2D> icons, ref List<string> tooltips)
+		void Problem_radiation(VesselData vd, ref List<Texture2D> icons, ref List<string> tooltips)
 		{
-			string radiation_str = Lib.BuildString(" (<i>", (info.radiation * 60.0 * 60.0).ToString("F3"), " rad/h)</i>");
-			if (info.radiation > 1.0 / 3600.0)
+			string radiation_str = Lib.BuildString(" (<i>", (vd.EnvRadiation * 60.0 * 60.0).ToString("F3"), " rad/h)</i>");
+			if (vd.EnvRadiation > 1.0 / 3600.0)
 			{
 				icons.Add(Icons.radiation_red);
 				tooltips.Add(Lib.BuildString("Exposed to extreme radiation", radiation_str));
 			}
-			else if (info.radiation > 0.15 / 3600.0)
+			else if (vd.EnvRadiation > 0.15 / 3600.0)
 			{
 				icons.Add(Icons.radiation_yellow);
 				tooltips.Add(Lib.BuildString("Exposed to intense radiation", radiation_str));
 			}
-			else if (info.radiation > 0.0195 / 3600.0)
+			else if (vd.EnvRadiation > 0.0195 / 3600.0)
 			{
 				icons.Add(Icons.radiation_yellow);
 				tooltips.Add(Lib.BuildString("Exposed to moderate radiation", radiation_str));
 			}
 		}
 
-		void Problem_poisoning(Vessel_info info, ref List<Texture2D> icons, ref List<string> tooltips)
+		void Problem_poisoning(VesselData vd, ref List<Texture2D> icons, ref List<string> tooltips)
 		{
-			string poisoning_str = Lib.BuildString("CO2 level in internal atmosphere: <b>", Lib.HumanReadablePerc(info.poisoning), "</b>");
-			if (info.poisoning >= Settings.PoisoningThreshold)
+			string poisoning_str = Lib.BuildString("CO2 level in internal atmosphere: <b>", Lib.HumanReadablePerc(vd.Poisoning), "</b>");
+			if (vd.Poisoning >= Settings.PoisoningThreshold)
 			{
 				icons.Add(Icons.recycle_red);
 				tooltips.Add(poisoning_str);
 			}
-			else if (info.poisoning > Settings.PoisoningThreshold / 1.25)
+			else if (vd.Poisoning > Settings.PoisoningThreshold / 1.25)
 			{
 				icons.Add(Icons.recycle_yellow);
 				tooltips.Add(poisoning_str);
 			}
 		}
 
-		void Problem_humidity(Vessel_info info, ref List<Texture2D> icons, ref List<string> tooltips)
+		void Problem_humidity(VesselData vd, ref List<Texture2D> icons, ref List<string> tooltips)
 		{
-			string humidity_str = Lib.BuildString("Humidity level in internal atmosphere: <b>", Lib.HumanReadablePerc(info.humidity), "</b>");
-			if (info.humidity >= Settings.HumidityThreshold)
+			string humidity_str = Lib.BuildString("Humidity level in internal atmosphere: <b>", Lib.HumanReadablePerc(vd.Humidity), "</b>");
+			if (vd.Humidity >= Settings.HumidityThreshold)
 			{
 				icons.Add(Icons.recycle_red);
 				tooltips.Add(humidity_str);
 			}
-			else if (info.humidity > Settings.HumidityThreshold / 1.25)
+			else if (vd.Humidity > Settings.HumidityThreshold / 1.25)
 			{
 				icons.Add(Icons.recycle_yellow);
 				tooltips.Add(humidity_str);
@@ -493,20 +494,20 @@ namespace KERBALISM
 			}
 		}
 
-		void Indicator_problems(Panel p, Vessel v, Vessel_info vi, List<ProtoCrewMember> crew)
+		void Indicator_problems(Panel p, Vessel v, VesselData vd, List<ProtoCrewMember> crew)
 		{
 			// store problems icons & tooltips
 			List<Texture2D> problem_icons = new List<Texture2D>();
 			List<string> problem_tooltips = new List<string>();
 
 			// detect problems
-			Problem_sunlight(vi, ref problem_icons, ref problem_tooltips);
+			Problem_sunlight(vd, ref problem_icons, ref problem_tooltips);
 			if (Features.SpaceWeather) Problem_storm(v, ref problem_icons, ref problem_tooltips);
 			if (crew.Count > 0 && Profile.rules.Count > 0) Problem_kerbals(crew, ref problem_icons, ref problem_tooltips);
-			if (crew.Count > 0 && Features.Radiation) Problem_radiation(vi, ref problem_icons, ref problem_tooltips);
-			Problem_greenhouses(v, vi.greenhouses, ref problem_icons, ref problem_tooltips);
-			if (Features.Poisoning) Problem_poisoning(vi, ref problem_icons, ref problem_tooltips);
-			if (Features.Humidity) Problem_humidity(vi, ref problem_icons, ref problem_tooltips);
+			if (crew.Count > 0 && Features.Radiation) Problem_radiation(vd, ref problem_icons, ref problem_tooltips);
+			Problem_greenhouses(v, vd.Greenhouses, ref problem_icons, ref problem_tooltips);
+			if (Features.Poisoning) Problem_poisoning(vd, ref problem_icons, ref problem_tooltips);
+			if (Features.Humidity) Problem_humidity(vd, ref problem_icons, ref problem_tooltips);
 
 			// choose problem icon
 			const UInt64 problem_icon_time = 3;
@@ -521,60 +522,60 @@ namespace KERBALISM
 			p.AddIcon(problem_icon, String.Join("\n", problem_tooltips.ToArray()));
 		}
 
-		void Indicator_ec(Panel p, Vessel v, Vessel_info vi)
+		void Indicator_ec(Panel p, Vessel v, VesselData vd)
 		{
 #if !KSP170 && !KSP16 && !KSP15 && !KSP14
 			if (v.vesselType == VesselType.DeployedScienceController)
 				return;
 #endif
 
-			Resource_info ec = ResourceCache.Info(v, "ElectricCharge");
+			ResourceInfo ec = ResourceCache.GetResource(v, "ElectricCharge");
 			Supply supply = Profile.supplies.Find(k => k.resource == "ElectricCharge");
 			double low_threshold = supply != null ? supply.low_threshold : 0.15;
-			double depletion = ec.Depletion(vi.crew_count);
+			double depletion = ec.DepletionTime();
 
 			string tooltip = Lib.BuildString
 			(
 			  "<align=left /><b>name\tlevel\tduration</b>\n",
-			  ec.level <= 0.005 ? "<color=#ff0000>" : ec.level <= low_threshold ? "<color=#ffff00>" : "<color=#cccccc>",
+			  ec.Level <= 0.005 ? "<color=#ff0000>" : ec.Level <= low_threshold ? "<color=#ffff00>" : "<color=#cccccc>",
 			  "EC\t",
-			  Lib.HumanReadablePerc(ec.level), "\t",
+			  Lib.HumanReadablePerc(ec.Level), "\t",
 			  depletion <= double.Epsilon ? "depleted" : Lib.HumanReadableDuration(depletion),
 			  "</color>"
 			);
 
-			Texture2D image = ec.level <= 0.005
+			Texture2D image = ec.Level <= 0.005
 			  ? Icons.battery_red
-			  : ec.level <= low_threshold
+			  : ec.Level <= low_threshold
 			  ? Icons.battery_yellow
 			  : Icons.battery_white;
 
 			p.AddIcon(image, tooltip);
 		}
 
-		void Indicator_supplies(Panel p, Vessel v, Vessel_info vi)
+		void Indicator_supplies(Panel p, Vessel v, VesselData vd)
 		{
 			List<string> tooltips = new List<string>();
 			uint max_severity = 0;
-			if (vi.crew_count > 0)
+			if (vd.CrewCount > 0)
 			{
 				foreach (Supply supply in Profile.supplies.FindAll(k => k.resource != "ElectricCharge"))
 				{
-					Resource_info res = ResourceCache.Info(v, supply.resource);
-					double depletion = res.Depletion(vi.crew_count);
+					ResourceInfo res = ResourceCache.GetResource(v, supply.resource);
+					double depletion = res.DepletionTime();
 
-					if (res.capacity > double.Epsilon)
+					if (res.Capacity > double.Epsilon)
 					{
 						if (tooltips.Count == 0) tooltips.Add(String.Format("<align=left /><b>{0,-18}\tlevel\tduration</b>", "name"));
 						tooltips.Add(Lib.BuildString
 						(
-						  res.level <= 0.005 ? "<color=#ff0000>" : res.level <= supply.low_threshold ? "<color=#ffff00>" : "<color=#cccccc>",
-						  String.Format("{0,-18}\t{1}\t{2}", supply.resource, Lib.HumanReadablePerc(res.level),
+						  res.Level <= 0.005 ? "<color=#ff0000>" : res.Level <= supply.low_threshold ? "<color=#ffff00>" : "<color=#cccccc>",
+						  String.Format("{0,-18}\t{1}\t{2}", supply.resource, Lib.HumanReadablePerc(res.Level),
 						  depletion <= double.Epsilon ? "depleted" : Lib.HumanReadableDuration(depletion)),
 						  "</color>"
 						));
 
-						uint severity = res.level <= 0.005 ? 2u : res.level <= supply.low_threshold ? 1u : 0;
+						uint severity = res.Level <= 0.005 ? 2u : res.Level <= supply.low_threshold ? 1u : 0;
 						max_severity = Math.Max(max_severity, severity);
 					}
 				}
@@ -589,16 +590,16 @@ namespace KERBALISM
 			p.AddIcon(image, string.Join("\n", tooltips.ToArray()));
 		}
 
-		void Indicator_reliability(Panel p, Vessel v, Vessel_info vi)
+		void Indicator_reliability(Panel p, Vessel v, VesselData vd)
 		{
 			Texture2D image;
 			string tooltip;
-			if (!vi.malfunction)
+			if (!vd.Malfunction)
 			{
 				image = Icons.wrench_white;
 				tooltip = string.Empty;
 			}
-			else if (!vi.critical)
+			else if (!vd.Critical)
 			{
 				image = Icons.wrench_yellow;
 				tooltip = "Malfunctions";
@@ -612,22 +613,23 @@ namespace KERBALISM
 			p.AddIcon(image, tooltip);
 		}
 
-		void Indicator_signal(Panel p, Vessel v, Vessel_info vi)
+		void Indicator_signal(Panel p, Vessel v, VesselData vd)
 		{
-			ConnectionInfo conn = vi.connection;
+			ConnectionInfo conn = vd.Connection;
 
 			// signal strength
-			string signal_str = conn.strength > Double.Epsilon ? Lib.HumanReadablePerc(Math.Ceiling(conn.strength * 10000) / 10000, "F2") : Lib.Color("#ffaa00", Lib.Italic(Localizer.Format("#KERBALISM_Generic_NO")));
+			var strength = Math.Ceiling(conn.strength * 10000) / 10000;
+			string signal_str = strength > 0.001 ? Lib.HumanReadablePerc(strength, "F2") : Lib.Color("#ffaa00", Lib.Italic(Localizer.Format("#KERBALISM_Generic_NO")));
 
 			// target name
 			string target_str = conn.linked ? conn.target_name : Localizer.Format("#KERBALISM_Generic_NONE");
 
 			// transmitting info
 			string comms_str = conn.linked ? Localizer.Format("#KERBALISM_UI_telemetry") : Localizer.Format("#KERBALISM_Generic_NOTHING");
-			if (vi.transmitting.Length > 0)
+			if (vd.transmitting.Length > 0)
 			{
-				ExperimentInfo exp = Science.Experiment(vi.transmitting);
-				comms_str = exp.name;
+				ExperimentInfo exp = Science.Experiment(vd.transmitting);
+				comms_str = Lib.Ellipsis(exp.name, Styles.ScaleStringLength(35));
 			}
 
 			// create tooltip

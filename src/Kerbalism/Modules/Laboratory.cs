@@ -7,7 +7,7 @@ using KSP.Localization;
 namespace KERBALISM
 {
 
-	public sealed class Laboratory: PartModule, IModuleInfo, ISpecifics, IContractObjectiveModule
+	public class Laboratory: PartModule, IModuleInfo, ISpecifics, IContractObjectiveModule
 	{
 		// config
 		[KSPField] public double ec_rate;						// ec consumed per-second
@@ -36,7 +36,7 @@ namespace KERBALISM
 		private static string background_sample = null;             // sample currently being analyzed in background simulation
 		private Status status = Status.DISABLED;                    // laboratory status
 		private string status_txt = string.Empty;                   // status string to show next to the ui button
-		private Resource_info ec = null;                            // resource info for EC
+		private ResourceInfo ec = null;                            // resource info for EC
 		private Drive drive = null;                                 // my drive
 
 		// localized strings
@@ -114,12 +114,12 @@ namespace KERBALISM
 					if (current_sample != null)
 					{
 						// consume EC
-						ec = ResourceCache.Info(vessel, "ElectricCharge");
-						ec.Consume(ec_rate * Kerbalism.elapsed_s, "lab");
+						ec = ResourceCache.GetResource(vessel, "ElectricCharge");
+						ec.Consume(ec_rate * Kerbalism.elapsed_s, "laboratory");
 
 						// if there was ec
 						// - comparing against amount in previous simulation step
-						if (ec.amount > double.Epsilon)
+						if (ec.Amount > double.Epsilon)
 						{
 							// analyze the sample
 							status = Analyze(vessel, current_sample, rate * Kerbalism.elapsed_s);
@@ -138,7 +138,7 @@ namespace KERBALISM
 			else status = Status.DISABLED;
 		}
 
-		public static void BackgroundUpdate(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, Laboratory lab, Resource_info ec, double elapsed_s)
+		public static void BackgroundUpdate(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, Laboratory lab, ResourceInfo ec, double elapsed_s)
 		{
 			// if enabled
 			if (Lib.Proto.GetBool(m, "running"))
@@ -162,11 +162,11 @@ namespace KERBALISM
 					if (background_sample != null)
 					{
 						// consume EC
-						ec.Consume(lab.ec_rate * elapsed_s, "lab");
+						ec.Consume(lab.ec_rate * elapsed_s, "laboratory");
 
 						// if there was ec
 						// - comparing against amount in previous simulation step
-						if (ec.amount > double.Epsilon)
+						if (ec.Amount > double.Epsilon)
 						{
 							// analyze the sample
 							var status = Analyze(v, background_sample, rate * elapsed_s);

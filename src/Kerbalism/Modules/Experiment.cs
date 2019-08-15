@@ -9,7 +9,7 @@ using System.Collections;
 namespace KERBALISM
 {
 
-	public sealed class Experiment : PartModule, ISpecifics, IPartMassModifier
+	public class Experiment : PartModule, ISpecifics, IPartMassModifier
 	{
 		// config
 		[KSPField] public string experiment_id;               // id of associated experiment definition
@@ -98,18 +98,25 @@ namespace KERBALISM
 			base.OnLoad(node);
 		}
 
-		public override void OnStart(StartState state)
+		/// <summary>Called by Callbacks just after rollout to launch pad</summary>
+		public void OnRollout()
 		{
-			// don't break tutorial scenarios
 			if (Lib.DisableScenario(this)) return;
 
-			// initialize the remaining sample mass in case it was not configured in the cfg.
-			if (remainingSampleMass < float.Epsilon && string.IsNullOrEmpty(issue) && !sample_collecting)
+			// initialize the remaining sample mass
+			// this needs to be done only once just after launch
+			if (!sample_collecting)
 			{
 				remainingSampleMass = sample_mass;
 				if (sample_reservoir > float.Epsilon)
 					remainingSampleMass = sample_reservoir;
 			}
+		}
+
+		public override void OnStart(StartState state)
+		{
+			// don't break tutorial scenarios
+			if (Lib.DisableScenario(this)) return;			
 
 			// create animators
 			deployAnimator = new Animator(part, anim_deploy);
@@ -131,7 +138,7 @@ namespace KERBALISM
 			if (!string.IsNullOrEmpty(crew_prepare))
 				prepare_cs = new CrewSpecs(crew_prepare);
 
-			resourceDefs = KerbalismProcess.ParseResources(resources);
+			resourceDefs = ParseResources(resources);
 
 			foreach (var hd in part.FindModulesImplementing<HardDrive>())
 			{
@@ -167,11 +174,8 @@ namespace KERBALISM
 				Vessel v = FlightGlobals.ActiveVessel;
 				if (v == null || EVA.IsDead(v)) return;
 
-				// get info from cache
-				Vessel_info vi = Cache.VesselInfo(vessel);
-
 				// do nothing if vessel is invalid
-				if (!vi.is_valid) return;
+				if (!vessel.KerbalismIsValid()) return;
 
 				var sampleSize = exp.max_amount;
 				var eta = data_rate < double.Epsilon || Done(exp, dataSampled) ? " done" : " " + Lib.HumanReadableCountdown((sampleSize - dataSampled) / data_rate);
@@ -218,11 +222,11 @@ namespace KERBALISM
 		{
 			// basic sanity checks
 			if (Lib.IsEditor()) return;
-			if (!Cache.VesselInfo(vessel).is_valid) return;
+			if (!vessel.KerbalismIsValid()) return;
 			if (next_check > Planetarium.GetUniversalTime()) return;
 
 			// get ec handler
-			Resource_info ec = ResourceCache.Info(vessel, "ElectricCharge");
+			ResourceInfo ec = ResourceCache.GetResource(vessel, "ElectricCharge");
 			shrouded = part.ShieldedFromAirstream;
 			issue = TestForIssues(vessel, ec, this, privateHdId, broken,
 				remainingSampleMass, didPrepare, shrouded, last_subject_id);
@@ -258,7 +262,7 @@ namespace KERBALISM
 			DoRecord(ec, subject_id);
 		}
 
-		private void DoRecord(Resource_info ec, string subject_id)
+		private void DoRecord(ResourceInfo ec, string subject_id)
 		{
 			var stored = DoRecord(this, subject_id, vessel, ec, privateHdId,
 				ResourceCache.Get(vessel), resourceDefs,
@@ -276,8 +280,8 @@ namespace KERBALISM
 			return drive;
 		}
 
-		private static bool DoRecord(Experiment experiment, string subject_id, Vessel vessel, Resource_info ec, uint hdId, 
-			Vessel_resources resources, List<KeyValuePair<string, double>> resourceDefs,
+		private static bool DoRecord(Experiment experiment, string subject_id, Vessel vessel, ResourceInfo ec, uint hdId, 
+			VesselResources resources, List<KeyValuePair<string, double>> resourceDefs,
 			double remainingSampleMass, double dataSampled,
 			out double sampledOut, out double remainingSampleMassOut)
 		{
@@ -356,20 +360,42 @@ namespace KERBALISM
 			return true;
 		}
 
-		private static double Rate(Vessel v, double chunkSize, double maxCapacity, double elapsed, Resource_info ec, double ec_rate, Vessel_resources resources, List<KeyValuePair<string, double>> resourceDefs)
+		private static double Rate(Vessel v, double chunkSize, double maxCapacity, double elapsed, ResourceInfo ec, double ec_rate, VesselResources resources, List<KeyValuePair<string, double>> resourceDefs)
 		{
 			double result = Lib.Clamp(maxCapacity / chunkSize, 0, 1);
-			result = Math.Min(result, Lib.Clamp(ec.amount / (ec_rate * elapsed), 0, 1));
+			result = Math.Min(result, Lib.Clamp(ec.Amount / (ec_rate * elapsed), 0, 1));
 
 			foreach (var p in resourceDefs) {
-				var ri = resources.Info(v, p.Key);
-				result = Math.Min(result, Lib.Clamp(ri.amount / (p.Value * elapsed), 0, 1));
+				var ri = resources.GetResource(v, p.Key);
+				result = Math.Min(result, Lib.Clamp(ri.Amount / (p.Value * elapsed), 0, 1));
 			}
 
 			return result;
 		}
 
-		public static void BackgroundUpdate(Vessel v, ProtoPartModuleSnapshot m, Experiment experiment, Resource_info ec, Vessel_resources resources, double elapsed_s)
+		private static List<KeyValuePair<string, double>> noResources = new List<KeyValuePair<string, double>>();
+		internal static List<KeyValuePair<string, double>> ParseResources(string resources, bool logErros = false)
+		{
+			if (string.IsNullOrEmpty(resources)) return noResources;
+
+			List<KeyValuePair<string, double>> defs = new List<KeyValuePair<string, double>>();
+			var reslib = PartResourceLibrary.Instance.resourceDefinitions;
+
+			foreach (string s in Lib.Tokenize(resources, ','))
+			{
+				// definitions are Resource@rate
+				var p = Lib.Tokenize(s, '@');
+				if (p.Count != 2) continue;             // malformed definition
+				string res = p[0];
+				if (!reslib.Contains(res)) continue;    // unknown resource
+				double rate = double.Parse(p[1]);
+				if (res.Length < 1 || rate < double.Epsilon) continue;  // rate <= 0
+				defs.Add(new KeyValuePair<string, double>(res, rate));
+			}
+			return defs;
+		}
+
+		public static void BackgroundUpdate(Vessel v, ProtoPartModuleSnapshot m, Experiment experiment, ResourceInfo ec, VesselResources resources, double elapsed_s)
 		{
 			bool didPrepare = Lib.Proto.GetBool(m, "didPrepare", false);
 			bool shrouded = Lib.Proto.GetBool(m, "shrouded", false);
@@ -383,7 +409,7 @@ namespace KERBALISM
 			string issue = TestForIssues(v, ec, experiment, privateHdId, broken,
 				remainingSampleMass, didPrepare, shrouded, last_subject_id);
 			if(string.IsNullOrEmpty(issue))
-				issue = TestForResources(v, KerbalismProcess.ParseResources(experiment.resources), elapsed_s, resources);
+				issue = TestForResources(v, ParseResources(experiment.resources), elapsed_s, resources);
 
 			Lib.Proto.Set(m, "issue", issue);
 
@@ -411,7 +437,7 @@ namespace KERBALISM
 				return;
 
 			var stored = DoRecord(experiment, subject_id, v, ec, privateHdId,
-				resources, KerbalismProcess.ParseResources(experiment.resources),
+				resources, ParseResources(experiment.resources),
 				remainingSampleMass, dataSampled, out dataSampled, out remainingSampleMass);
 			if (!stored) Lib.Proto.Set(m, "issue", insufficient_storage);
 
@@ -457,22 +483,22 @@ namespace KERBALISM
 			broken = breakdown;
 		}
 
-		private static string TestForResources(Vessel v, List<KeyValuePair<string, double>> defs, double elapsed_s, Vessel_resources res)
+		private static string TestForResources(Vessel v, List<KeyValuePair<string, double>> defs, double elapsed_s, VesselResources res)
 		{
 			if (defs.Count < 1) return string.Empty;
 
 			// test if there are enough resources on the vessel
 			foreach(var p in defs)
 			{
-				var ri = res.Info(v, p.Key);
-				if (ri.amount < p.Value * elapsed_s)
-					return "missing " + ri.resource_name;
+				var ri = res.GetResource(v, p.Key);
+				if (ri.Amount < p.Value * elapsed_s)
+					return "missing " + ri.ResourceName;
 			}
 
 			return string.Empty;
 		}
 
-		private static string TestForIssues(Vessel v, Resource_info ec, Experiment experiment, uint hdId, bool broken,
+		private static string TestForIssues(Vessel v, ResourceInfo ec, Experiment experiment, uint hdId, bool broken,
 			double remainingSampleMass, bool didPrepare, bool isShrouded, string last_subject_id)
 		{
 			var subject_id = Science.Generate_subject_id(experiment.experiment_id, v);
@@ -487,7 +513,7 @@ namespace KERBALISM
 				&& !string.IsNullOrEmpty(last_subject_id) && subject_id != last_subject_id;
 			if (needsReset) return "reset required";
 
-			if (ec.amount < double.Epsilon && experiment.ec_rate > double.Epsilon)
+			if (ec.Amount < double.Epsilon && experiment.ec_rate > double.Epsilon)
 				return "no Electricity";
 			
 			if (!string.IsNullOrEmpty(experiment.crew_operate))
@@ -771,7 +797,7 @@ namespace KERBALISM
 			specs.Add("<color=#00ffff>Needs:</color>");
 
 			specs.Add("EC", Lib.HumanReadableRate(ec_rate));
-			foreach(var p in KerbalismProcess.ParseResources(resources))
+			foreach(var p in ParseResources(resources))
 				specs.Add(p.Key, Lib.HumanReadableRate(p.Value));
 
 			if (crew_prepare.Length > 0)

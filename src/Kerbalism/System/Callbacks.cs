@@ -2,7 +2,6 @@
 using System.Collections;
 using System.Collections.Generic;
 using KSP.UI.Screens;
-using KSP.UI.Screens.SpaceCenter.MissionSummaryDialog;
 using UnityEngine;
 
 
@@ -16,15 +15,16 @@ namespace KERBALISM
 		{
 			GameEvents.onCrewOnEva.Add(this.ToEVA);
 			GameEvents.onCrewBoardVessel.Add(this.FromEVA);
-			GameEvents.onVesselRecoveryProcessing.Add(this.VesselRecoveryProcessing);
 			GameEvents.onVesselRecovered.Add(this.VesselRecovered);
 			GameEvents.onVesselTerminated.Add(this.VesselTerminated);
 			GameEvents.onVesselWillDestroy.Add(this.VesselDestroyed);
 			GameEvents.onNewVesselCreated.Add(this.VesselCreated);
 			GameEvents.onPartCouple.Add(this.VesselDock);
 
-			GameEvents.onVesselChange.Add((v) => { Cache.PurgeObjects(v); });
-			GameEvents.onVesselStandardModification.Add((v) => { Cache.PurgeObjects(v); });
+			GameEvents.OnVesselRollout.Add(this.VesselRollout);
+
+			GameEvents.onVesselChange.Add((v) => { OnVesselModified(v); });
+			GameEvents.onVesselStandardModification.Add((v) => { OnVesselStandardModification(v); });
 
 			GameEvents.onPartDie.Add(this.PartDestroyed);
 			GameEvents.OnTechnologyResearched.Add(this.TechResearched);
@@ -48,13 +48,26 @@ namespace KERBALISM
 			GameEvents.onGUILaunchScreenSpawn.Add((_) => visible = false);
 			GameEvents.onGUILaunchScreenDespawn.Add(() => visible = true);
 
-			GameEvents.onGameSceneSwitchRequested.Add((_) => { visible = false; Cache.PurgeObjects(); Science.CreditAllDeferred(); });
+			GameEvents.onGameSceneSwitchRequested.Add((_) => { visible = false; Cache.PurgeObjects(); });
 			GameEvents.onGUIApplicationLauncherReady.Add(() => visible = true);
 
 			GameEvents.CommNet.OnNetworkInitialized.Add(() => Kerbalism.Fetch.StartCoroutine(NetworkInitialized()));
 
 			// add editor events
 			GameEvents.onEditorShipModified.Add((sc) => Planner.Planner.EditorShipModifiedEvent(sc));
+		}
+
+		private void OnVesselStandardModification(Vessel vessel)
+		{
+			// avoid this being called on vessel launch, when vessel is not yet properly initialized
+			if (!vessel.loaded && vessel.protoVessel == null) return;
+			OnVesselModified(vessel);
+		}
+
+		private void OnVesselModified(Vessel vessel)
+		{
+			Cache.PurgeObjects(vessel);
+			vessel.KerbalismData().UpdateOnVesselModified(vessel);
 		}
 
 		public IEnumerator NetworkInitialized()
@@ -67,14 +80,14 @@ namespace KERBALISM
 
 		void ToEVA(GameEvents.FromToAction<Part, Part> data)
 		{
-			Cache.PurgeObjects(data.from.vessel);
-			Cache.PurgeObjects(data.to.vessel);
+			OnVesselModified(data.from.vessel);
+			OnVesselModified(data.to.vessel);
 
 			// get total crew in the origin vessel
 			double tot_crew = Lib.CrewCount(data.from.vessel) + 1.0;
 
 			// get vessel resources handler
-			Vessel_resources resources = ResourceCache.Get(data.from.vessel);
+			VesselResources resources = ResourceCache.Get(data.from.vessel);
 
 			// setup supply resources capacity in the eva kerbal
 			Profile.SetupEva(data.to);
@@ -93,7 +106,7 @@ namespace KERBALISM
 					continue;
 				}
 
-				double quantity = Math.Min(resources.Info(data.from.vessel, res.resourceName).amount / tot_crew, res.maxAmount);
+				double quantity = Math.Min(resources.GetResource(data.from.vessel, res.resourceName).Amount / tot_crew, res.maxAmount);
 				// remove resource from vessel
 				quantity = data.from.RequestResource(res.resourceName, quantity);
 
@@ -128,7 +141,7 @@ namespace KERBALISM
 			EVA.HeadLamps(kerbal, false);
 
 			// execute script
-			DB.Vessel(data.from.vessel).computer.Execute(data.from.vessel, ScriptType.eva_out);
+			data.from.vessel.KerbalismData().computer.Execute(data.from.vessel, ScriptType.eva_out);
 		}
 
 
@@ -149,100 +162,17 @@ namespace KERBALISM
 			// merge drives data
 			Drive.Transfer(data.from.vessel, data.to.vessel, true);
 
-			// forget vessel data
-			DB.vessels.Remove(Lib.VesselID(data.from.vessel));
+			// forget EVA vessel data
+			data.from.vessel.KerbalismDataDelete();
+			Cache.PurgeObjects(data.from.vessel);
 			Drive.Purge(data.from.vessel);
 
-			Cache.PurgeObjects(data.from.vessel);
-			Cache.PurgeObjects(data.to.vessel);
+			// update boarded vessel
+			this.OnVesselModified(data.to.vessel);
 
 			// execute script
-			DB.Vessel(data.to.vessel).computer.Execute(data.to.vessel, ScriptType.eva_in);
+			data.to.vessel.KerbalismData().computer.Execute(data.to.vessel, ScriptType.eva_in);
 		}
-
-
-		void VesselRecoveryProcessing(ProtoVessel v, MissionRecoveryDialog dialog, float score)
-		{
-			// note:
-			// this function accumulate science stored in drives on recovery,
-			// and visualize the data in the recovery dialog window
-
-			// do nothing if science system is disabled, or in sandbox mode
-			if (!Features.Science || HighLogic.CurrentGame.Mode == Game.Modes.SANDBOX)
-				return;
-
-			var vesselID = Lib.VesselID(v);
-			// get the drive data from DB
-			if (!DB.vessels.ContainsKey(vesselID))
-				return;
-
-			foreach (Drive drive in Drive.GetDrives(v))
-			{
-				// for each file in the drive
-				foreach (KeyValuePair<string, File> p in drive.files)
-				{
-					// shortcuts
-					string filename = p.Key;
-					File file = p.Value;
-
-					// de-buffer partially transmitted data
-					file.size += file.buff;
-					file.buff = 0.0;
-
-					// get subject
-					ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(filename);
-
-					// credit science
-					float credits = Science.Credit(filename, file.size, false, v, true);
-
-					// create science widged
-					ScienceSubjectWidget widged = ScienceSubjectWidget.Create
-					(
-					  subject,            // subject
-					  (float)file.size,   // data gathered
-					  credits,            // science points
-					  dialog              // recovery dialog
-					);
-
-					// add widget to dialog
-					dialog.AddDataWidget(widged);
-
-					// add science credits to total
-					dialog.scienceEarned += (float)credits;
-				}
-
-				// for each sample in the drive
-				// for each file in the drive
-				foreach (KeyValuePair<string, Sample> p in drive.samples)
-				{
-					// shortcuts
-					string filename = p.Key;
-					Sample sample = p.Value;
-
-					// get subject
-					ScienceSubject subject = ResearchAndDevelopment.GetSubjectByID(filename);
-
-					// credit science
-					float credits = Science.Credit(filename, sample.size, false, v, true);
-
-					// create science widged
-					ScienceSubjectWidget widged = ScienceSubjectWidget.Create
-					(
-					  subject,            // subject
-					  (float)sample.size, // data gathered
-					  credits,            // science points
-					  dialog              // recovery dialog
-					);
-
-					// add widget to dialog
-					dialog.AddDataWidget(widged);
-
-					// add science credits to total
-					dialog.scienceEarned += (float)credits;
-				}
-			}
-		}
-
 
 		void VesselRecovered(ProtoVessel pv, bool b)
 		{
@@ -266,7 +196,8 @@ namespace KERBALISM
 				DB.RecoverKerbal(c.name);
 			}
 
-			DB.vessels.Remove(Lib.VesselID(pv));
+			// delete the vessel data
+			pv.KerbalismDataDelete();
 
 			// purge the caches
 			ResourceCache.Purge(pv);
@@ -281,7 +212,8 @@ namespace KERBALISM
 			foreach (ProtoCrewMember c in pv.GetVesselCrew())
 				DB.KillKerbal(c.name, true);
 
-			DB.vessels.Remove(Lib.VesselID(pv));
+			// delete the vessel data
+			pv.KerbalismDataDelete();
 
 			// purge the caches
 			ResourceCache.Purge(pv);
@@ -299,8 +231,6 @@ namespace KERBALISM
 
 		void VesselDestroyed(Vessel v)
 		{
-			DB.vessels.Remove(Lib.VesselID(v));
-
 			// rescan the damn kerbals
 			// - vessel crew is empty at destruction time
 			// - we can't even use the flightglobal roster, because sometimes it isn't updated yet at this point
@@ -322,6 +252,8 @@ namespace KERBALISM
 				DB.KillKerbal(n, false);
 			}
 
+			// delete the vessel data
+			v.KerbalismDataDelete();
 
 			// purge the caches
 			ResourceCache.Purge(v);
@@ -331,24 +263,26 @@ namespace KERBALISM
 
 		void VesselDock(GameEvents.FromToAction<Part, Part> e)
 		{
-			var fromVessel = e.from.vessel;
-			DB.vessels.Remove(Lib.VesselID(fromVessel));
-
+			Vessel dockingVessel = e.from.vessel;
 			// note:
-			//  we do not forget vessel data here, it just became inactive
+			//  we do not delete vessel data here, it just became inactive
 			//  and ready to be implicitly activated again on undocking
 			//  we do however tweak the data of the vessel being docked a bit,
 			//  to avoid states getting out of sync, leading to unintuitive behaviours
-			VesselData vd = DB.Vessel(fromVessel);
-			vd.msg_belt = false;
-			vd.msg_signal = false;
-			vd.storm_age = 0.0;
-			vd.storm_time = 0.0;
-			vd.storm_state = 0;
-			vd.supplies.Clear();
-			vd.scansat_id.Clear();
+			dockingVessel.KerbalismData().UpdateOnDock();
+			Cache.PurgeObjects(dockingVessel);
 
-			Cache.PurgeObjects();
+			// Update docked to vessel
+			this.OnVesselModified(e.to.vessel);
+		}
+
+		void VesselRollout(ShipConstruct newVessel)
+		{
+			var vessel = FlightGlobals.ActiveVessel;
+			foreach(var experiment in vessel.FindPartModulesImplementing<Experiment>())
+			{
+				experiment.OnRollout();
+			}
 		}
 
 		void PartDestroyed(Part p)
@@ -357,22 +291,25 @@ namespace KERBALISM
 			if (Lib.IsEditor())
 				return;
 
-			var vi = Cache.VesselInfo(p.vessel);
-			if (!vi.is_valid)
-				return;
+			// only on valid vessels
+			if (!p.vessel.KerbalismIsValid()) return;
 
-			Cache.PurgeObjects(p.vessel);
+			// update vessel
+			this.OnVesselModified(p.vessel);
 
+			// credit science that was transmitted but not yet accounted for
 			if(DB.drives.ContainsKey(p.flightID))
 			{
 				foreach(var pair in DB.drives[p.flightID].files)
 				{
 					if(pair.Value.buff > double.Epsilon)
 					{
-						Science.Credit(pair.Key, pair.Value.buff, true, p.vessel.protoVessel, true);
+						Science.Credit(pair.Key, pair.Value.buff, true, p.vessel.protoVessel);
 					}
 				}
 			}
+
+			// remove drive
 			DB.drives.Remove(p.flightID);
 		}
 

@@ -5,9 +5,7 @@ using KSP.Localization;
 
 namespace KERBALISM
 {
-
-
-	public sealed class Emitter : PartModule, ISpecifics
+	public class Emitter : PartModule, ISpecifics
 	{
 		// config
 		[KSPField(isPersistant = true)] public double radiation;  // radiation in rad/s
@@ -64,7 +62,7 @@ namespace KERBALISM
 			if (running && ec_rate > double.Epsilon)
 			{
 				// get resource cache
-				Resource_info ec = ResourceCache.Info(vessel, "ElectricCharge");
+				ResourceInfo ec = ResourceCache.GetResource(vessel, "ElectricCharge");
 
 				// consume EC
 				ec.Consume(ec_rate * Kerbalism.elapsed_s, "emitter");
@@ -72,7 +70,7 @@ namespace KERBALISM
 		}
 
 
-		public static void BackgroundUpdate(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, Emitter emitter, Resource_info ec, double elapsed_s)
+		public static void BackgroundUpdate(Vessel v, ProtoPartSnapshot p, ProtoPartModuleSnapshot m, Emitter emitter, ResourceInfo ec, double elapsed_s)
 		{
 			// if enabled, and EC is required
 			if (Lib.Proto.GetBool(m, "running") && emitter.ec_rate > double.Epsilon)
@@ -126,14 +124,14 @@ namespace KERBALISM
 		public static double Total(Vessel v)
 		{
 			// get resource cache
-			Resource_info ec = ResourceCache.Info(v, "ElectricCharge");
+			ResourceInfo ec = ResourceCache.GetResource(v, "ElectricCharge");
 
 			double tot = 0.0;
 			if (v.loaded)
 			{
 				foreach (var emitter in Lib.FindModules<Emitter>(v))
 				{
-					if (ec.amount > double.Epsilon || emitter.ec_rate <= double.Epsilon)
+					if (ec.Amount > double.Epsilon || emitter.ec_rate <= double.Epsilon)
 					{
 						tot += emitter.running ? emitter.radiation : 0.0;
 					}
@@ -143,7 +141,7 @@ namespace KERBALISM
 			{
 				foreach (ProtoPartModuleSnapshot m in Lib.FindModules(v.protoVessel, "Emitter"))
 				{
-					if (ec.amount > double.Epsilon || Lib.Proto.GetDouble(m, "ec_rate") <= double.Epsilon)
+					if (ec.Amount > double.Epsilon || Lib.Proto.GetDouble(m, "ec_rate") <= double.Epsilon)
 					{
 						tot += Lib.Proto.GetBool(m, "running") ? Lib.Proto.GetDouble(m, "radiation") : 0.0;
 					}

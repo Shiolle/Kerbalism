@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
-
+using KSP.Localization;
 
 namespace KERBALISM
 {
@@ -17,11 +18,11 @@ namespace KERBALISM
 			// if vessel doesn't exist anymore, leave the panel empty
 			if (v == null) return;
 
-			// get info from the cache
-			Vessel_info vi = Cache.VesselInfo(v);
+			// get vessel data
+			VesselData vd = v.KerbalismData();
 
 			// if not a valid vessel, leave the panel empty
-			if (!vi.is_valid) return;
+			if (!vd.IsValid) return;
 
 			// set metadata
 			p.Title(Lib.BuildString(Lib.Ellipsis(v.vesselName, Styles.ScaleStringLength(20)), " <color=#cccccc>TELEMETRY</color>"));
@@ -29,30 +30,28 @@ namespace KERBALISM
 			p.paneltype = Panel.PanelType.telemetry;
 
 			// time-out simulation
-			if (p.Timeout(vi)) return;
-
-			// get vessel data
-			VesselData vd = DB.Vessel(v);
+			if (p.Timeout(vd)) return;
 
 			// get resources
-			Vessel_resources resources = ResourceCache.Get(v);
+			VesselResources resources = ResourceCache.Get(v);
 
 			// get crew
 			var crew = Lib.CrewList(v);
 
 			// draw the content
 			Render_crew(p, crew);
-			Render_greenhouse(p, vi);
-			Render_supplies(p, v, vi, resources);
-			Render_habitat(p, v, vi);
-			Render_environment(p, v, vi);
+			if (Features.Science) Render_science(p, v, vd);
+			Render_greenhouse(p, vd);
+			Render_supplies(p, v, vd, resources);
+			Render_habitat(p, v, vd);
+			Render_environment(p, v, vd);
 
 			// collapse eva kerbal sections into one
 			if (v.isEVA) p.Collapse("EVA SUIT");
 		}
 
 
-		static void Render_environment(Panel p, Vessel v, Vessel_info vi)
+		static void Render_environment(Panel p, Vessel v, VesselData vd)
 		{
 			// don't show env panel in eva kerbals
 			if (v.isEVA) return;
@@ -78,63 +77,121 @@ namespace KERBALISM
 			p.AddSection("ENVIRONMENT");
 			foreach (string type in readings)
 			{
-				p.AddContent(type, Sensor.Telemetry_content(v, vi, type), Sensor.Telemetry_tooltip(v, vi, type));
+				p.AddContent(type, Sensor.Telemetry_content(v, vd, type), Sensor.Telemetry_tooltip(v, vd, type));
 			}
 			if (readings.Count == 0) p.AddContent("<i>no sensors installed</i>");
 		}
 
-		static void Render_habitat(Panel p, Vessel v, Vessel_info vi)
+		static void Render_habitat(Panel p, Vessel v, VesselData vd)
 		{
 			// if habitat feature is disabled, do not show the panel
 			if (!Features.Habitat) return;
 
 			// if vessel is unmanned, do not show the panel
-			if (vi.crew_count == 0) return;
+			if (vd.CrewCount == 0) return;
 
 			// render panel, add some content based on enabled features
 			p.AddSection("HABITAT");
-			if (Features.Poisoning) p.AddContent("co2 level", Lib.Color(Lib.HumanReadablePerc(vi.poisoning, "F2"), vi.poisoning > Settings.PoisoningThreshold, "yellow"));
+			if (Features.Poisoning) p.AddContent("co2 level", Lib.Color(Lib.HumanReadablePerc(vd.Poisoning, "F2"), vd.Poisoning > Settings.PoisoningThreshold, "yellow"));
 			if (!v.isEVA)
 			{
-				if (Features.Humidity) p.AddContent("humidity", Lib.Color(Lib.HumanReadablePerc(vi.humidity, "F2"), vi.humidity > Settings.HumidityThreshold, "yellow"));
-				if (Features.Pressure) p.AddContent("pressure", Lib.HumanReadablePressure(vi.pressure * Sim.PressureAtSeaLevel()));
-				if (Features.Shielding) p.AddContent("shielding", Habitat.Shielding_to_string(vi.shielding));
-				if (Features.LivingSpace) p.AddContent("living space", Habitat.Living_space_to_string(vi.living_space));
-				if (Features.Comfort) p.AddContent("comfort", vi.comforts.Summary(), vi.comforts.Tooltip());
-				if (Features.Pressure) p.AddContent("EVA's available", vi.breathable ? "infinite" : Lib.HumanReadableInteger(vi.evas), vi.breathable ? "breathable atmosphere" : "approx (derived from stored N2)");
+				if (Features.Humidity) p.AddContent("humidity", Lib.Color(Lib.HumanReadablePerc(vd.Humidity, "F2"), vd.Humidity > Settings.HumidityThreshold, "yellow"));
+				if (Features.Pressure) p.AddContent("pressure", Lib.HumanReadablePressure(vd.Pressure * Sim.PressureAtSeaLevel()));
+				if (Features.Shielding) p.AddContent("shielding", Habitat.Shielding_to_string(vd.Shielding));
+				if (Features.LivingSpace) p.AddContent("living space", Habitat.Living_space_to_string(vd.LivingSpace));
+				if (Features.Comfort) p.AddContent("comfort", vd.Comforts.Summary(), vd.Comforts.Tooltip());
+				if (Features.Pressure) p.AddContent("EVA's available", vd.EnvBreathable ? "infinite" : Lib.HumanReadableInteger(vd.Evas), vd.EnvBreathable ? "breathable atmosphere" : "approx (derived from stored N2)");
 			}
 		}
 
-		static void Render_supplies(Panel p, Vessel v, Vessel_info vi, Vessel_resources resources)
+		static void Render_science(Panel p, Vessel v, VesselData vd)
+		{
+			// don't show env panel in eva kerbals
+			if (v.isEVA) return;
+
+			p.AddSection("SCIENCE");
+			ScienceLog scienceLog = v.KerbalismData().ScienceLog;
+
+			// comm status
+			ConnectionInfo conn = vd.Connection;
+			p.AddContent(Localizer.Format("#KERBALISM_UI_sciencerate"), Lib.HumanReadableDataRate(conn.rate));
+			p.AddContent("target", conn.target_name);
+
+			// total science gained by vessel
+			p.AddContent("total science gathered", Lib.HumanReadableScience(scienceLog.SumTotal));
+
+			// last transmission
+			if(!string.IsNullOrEmpty(scienceLog.LastSubjectTitle))
+			{
+				string lastTransmission = Lib.Ellipsis("last: " + scienceLog.LastSubjectTitle.ToLower(), Styles.ScaleStringLength(45));
+				var ago = Planetarium.GetUniversalTime() - scienceLog.LastTransmissionTime;
+				p.AddContent(lastTransmission, ago > 5 ? ("T+" + Lib.HumanReadableDuration(ago)) : "just now");
+			}
+		}
+
+		static void Render_supplies(Panel p, Vessel v, VesselData vd, VesselResources resources)
 		{
 			// for each supply
 			int supplies = 0;
 			foreach (Supply supply in Profile.supplies)
 			{
 				// get resource info
-				Resource_info res = resources.Info(v, supply.resource);
+				ResourceInfo res = resources.GetResource(v, supply.resource);
 
 				// only show estimate if the resource is present
-				if (res.amount <= 1e-10) continue;
+				if (res.Capacity <= 1e-10) continue;
 
 				// render panel title, if not done already
 				if (supplies == 0) p.AddSection("SUPPLIES");
 
-				// rate tooltip
-				string rate_tooltip = Math.Abs(res.rate) >= 1e-10 ? Lib.BuildString
-				(
-				  res.rate > 0.0 ? "<color=#00ff00><b>" : "<color=#ffaa00><b>",
-				  Lib.HumanReadableRate(Math.Abs(res.rate)),
-				  "</b></color>"
-				) : string.Empty;
-
 				// determine label
-				string label = supply.resource == "ElectricCharge"
-				  ? "battery"
-				  : Lib.SpacesOnCaps(supply.resource).ToLower();
+				string label = Lib.SpacesOnCaps(supply.resource).ToLower();
+
+				StringBuilder sb = new StringBuilder();
+				
+				sb.Append("<align=left />");
+				if (res.AverageRate != 0.0)
+				{
+					sb.Append(res.AverageRate > 0.0 ? "<color=#00ff00><b>+" : "<color=#ffaa00><b>-");
+					sb.Append(Lib.HumanReadableRate(Math.Abs(res.AverageRate)));
+					sb.Append("</b></color>");
+				}
+				else
+				{
+					sb.Append("<b>no change</b>");
+				}
+
+				if (res.AverageRate < 0.0 && res.Level < 0.0001) sb.Append(" <i>(empty)</i>");
+				else if (res.AverageRate > 0.0 && res.Level > 0.9999) sb.Append(" <i>(full)</i>");
+				else sb.Append("   "); // spaces to prevent alignement issues
+
+				sb.Append("\t");
+				sb.Append(res.Amount.ToString("F1"));
+				sb.Append("/");
+				sb.Append(res.Capacity.ToString("F1"));
+				sb.Append(" (");
+				sb.Append(res.Level.ToString("P0"));
+				sb.Append(")");
+
+				List<SupplyData.ResourceBroker> brokers = vd.Supply(supply.resource).ResourceBrokers;
+				if (brokers.Count > 0)
+				{
+					sb.Append("\n<b>------------    \t------------</b>");
+					foreach (SupplyData.ResourceBroker rb in brokers)
+					{
+						sb.Append("\n");
+						sb.Append(rb.rate > 0.0 ? "<color=#00ff00><b>+" : "<color=#ffaa00><b>-");
+						sb.Append(Lib.HumanReadableRate(Math.Abs(rb.rate)));
+						sb.Append("  </b></color>"); // spaces to prevent alignement issues
+						sb.Append("\t");
+						sb.Append(rb.name);
+					}
+				}
+
+				string rate_tooltip = sb.ToString();
 
 				// finally, render resource supply
-				p.AddContent(label, Lib.HumanReadableDuration(res.Depletion(vi.crew_count)), rate_tooltip);
+				p.AddContent(label, Lib.HumanReadableDuration(res.DepletionTime()), rate_tooltip);
 				++supplies;
 			}
 		}
@@ -192,18 +249,18 @@ namespace KERBALISM
 			}
 		}
 
-		static void Render_greenhouse(Panel p, Vessel_info vi)
+		static void Render_greenhouse(Panel p, VesselData vd)
 		{
 			// do nothing without greenhouses
-			if (vi.greenhouses.Count == 0) return;
+			if (vd.Greenhouses.Count == 0) return;
 
 			// panel section
 			p.AddSection("GREENHOUSE");
 
 			// for each greenhouse
-			for (int i = 0; i < vi.greenhouses.Count; ++i)
+			for (int i = 0; i < vd.Greenhouses.Count; ++i)
 			{
-				var greenhouse = vi.greenhouses[i];
+				var greenhouse = vd.Greenhouses[i];
 
 				// state string
 				string state = greenhouse.issue.Length > 0

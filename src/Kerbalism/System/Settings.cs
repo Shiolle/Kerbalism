@@ -45,7 +45,8 @@ namespace KERBALISM
 
             // signal
             UnlinkedControl = Lib.ConfigEnum(cfg, "UnlinkedControl", UnlinkedCtrl.none);
-            DataRateDampingExponent = Lib.ConfigValue(cfg, "DataRateDampingExponent", 6.0f);
+			DataRateMinimumBitsPerSecond = Lib.ConfigValue(cfg, "DataRateMinimumBitsPerSecond", 1.0f);
+			DataRateDampingExponent = Lib.ConfigValue(cfg, "DataRateDampingExponent", 6.0f);
 			DataRateDampingExponentRT = Lib.ConfigValue(cfg, "DataRateDampingExponentRT", 6.0f);
 			DataRateSurfaceExperiment = Lib.ConfigValue(cfg, "DataRateSurfaceExperiment", 0.3f);
 			TransmitterActiveEcFactor = Lib.ConfigValue(cfg, "TransmitterActiveEcFactor", 1.5);
@@ -53,9 +54,10 @@ namespace KERBALISM
 
 			// science
 			ScienceDialog = Lib.ConfigValue(cfg, "ScienceDialog", true);
+			AsteroidSampleMassPerMB = Lib.ConfigValue(cfg, "AsteroidSampleMassPerMB", 0.00002);
 
-            // reliability
-            QualityScale = Lib.ConfigValue(cfg, "QualityScale", 4.0);
+			// reliability
+			QualityScale = Lib.ConfigValue(cfg, "QualityScale", 4.0);
 
             // crew level
             LaboratoryCrewLevelBonus = Lib.ConfigValue(cfg, "LaboratoryCrewLevelBonus", 0.2);
@@ -83,10 +85,18 @@ namespace KERBALISM
             ComfortCallHome = Lib.ConfigValue(cfg, "ComfortCallHome", 0.1f);
             ComfortPanorama = Lib.ConfigValue(cfg, "ComfortPanorama", 0.1f);
             ComfortPlants = Lib.ConfigValue(cfg, "ComfortPlants", 0.1f);
-        }
 
-        // profile used
-        public static string Profile;                           // name of profile to use, if any
+			StormMinDays = Lib.ConfigValue(cfg, "StormMinDays", 100);
+			StormMaxDays = Lib.ConfigValue(cfg, "StormMaxDays", 500);
+			StormDurationHours = Lib.ConfigValue(cfg, "StormDurationHours", 6);
+			StormEjectionSpeed = Lib.ConfigValue(cfg, "StormEjectionSpeed", 0.33f);
+			ShieldingEfficiency = Lib.ConfigValue(cfg, "ShieldingEfficiency", 0.9f);
+			StormRadiation = Lib.ConfigValue(cfg, "StormRadiation", 5.0f);
+			ExternRadiation = Lib.ConfigValue(cfg, "ExternRadiation", 0.04f);
+		}
+
+	// profile used
+	public static string Profile;                           // name of profile to use, if any
 
         // user-defined features
         public static bool Reliability;                         // component malfunctions and critical failures
@@ -109,7 +119,8 @@ namespace KERBALISM
 
         // signal
         public static UnlinkedCtrl UnlinkedControl;             // available control for unlinked vessels: 'none', 'limited' or 'full'
-        public static float DataRateDampingExponent;            // how much to damp data rate. stock is equivalent to 1, 6 gives nice values, RSS would use 4
+		public static float DataRateMinimumBitsPerSecond;		// as long as there is a control connection, the science data rate will never go below this.
+		public static float DataRateDampingExponent;            // how much to damp data rate. stock is equivalent to 1, 6 gives nice values, RSS would use 4
 		public static float DataRateDampingExponentRT;          // same for RemoteTech
 		public static float DataRateSurfaceExperiment;			// transmission rate for surface experiments (Serenity DLC)
 		public static double TransmitterActiveEcFactor;			// how much of the configured EC rate is used while transmitter is active
@@ -117,9 +128,10 @@ namespace KERBALISM
 
 		// science
 		public static bool ScienceDialog;                       // keep showing the stock science dialog
+		public static double AsteroidSampleMassPerMB;           // When taking an asteroid sample, mass (in t) per MB of sample (baseValue * dataScale). default of 0.00002 => 34 Kg in stock
 
-        // reliability
-        public static double QualityScale;                      // scale applied to MTBF for high-quality components
+		// reliability
+		public static double QualityScale;                      // scale applied to MTBF for high-quality components
 
 
         // crew level
@@ -148,6 +160,14 @@ namespace KERBALISM
         public static float ComfortCallHome;
         public static float ComfortPanorama;
         public static float ComfortPlants;
+
+		public static int StormMinDays;
+		public static int StormDurationHours;
+		public static int StormMaxDays;
+		public static float StormEjectionSpeed;
+		public static float ShieldingEfficiency;
+		public static float StormRadiation;
+		public static float ExternRadiation;
 	}
 
 
